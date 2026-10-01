@@ -392,7 +392,7 @@ async function _validateLinkedPhaseService(linkedPhases, parentLocationId, trace
         );
     }
 
-    if (service.hidden === true) {
+    if (service.clientHidden === true) {
         throw createBookingError(
             ERROR_CODES.SERVICE_NOT_FOUND,
             `Linked phase service ${linkedServiceId} is hidden`,
@@ -495,9 +495,7 @@ function _isGuidOrNull(value) {
 // =============================================================================
 function _detectAndWarnAddons(unsafePayload, metaCita, traceId) {
     const rawAddons =
-        unsafePayload?.nativeAddonIds ||
         unsafePayload?.addOnIds ||
-        metaCita?.nativeAddonIds ||
         metaCita?.addOnIds ||
         [];
 
@@ -580,7 +578,7 @@ export async function executeBookingSaga(unsafePayload) {
     const traceId = unsafePayload?.traceId || makeTraceId("saga");
     const metaCita = _normalizePersistedMeta(unsafePayload?.metaCita || unsafePayload?.meta || {});
 
-    const detectedAddonIds = _detectAndWarnAddons(unsafePayload, metaCita, traceId);
+    const detectedAddOnIds = _detectAndWarnAddons(unsafePayload, metaCita, traceId);
 
     try {
         // =========================================================================
@@ -1068,7 +1066,7 @@ export async function executeBookingSaga(unsafePayload) {
                         f2Start: f2LocalStart || null,
                         f2End: f2LocalEnd || null,
                         checkoutUrl: resolvedCheckoutUrl,
-                        nativeAddonIds: detectedAddonIds,
+                        addOnIds: detectedAddOnIds,
                         writerRevision: revisionF1,
                     },
                     traceId: traceId,
@@ -1104,7 +1102,7 @@ export async function executeBookingSaga(unsafePayload) {
                         meta: {
                             pairToken: pairToken,
                             linkedF1BookingId: bookingF1Id,
-                            nativeAddonIds: detectedAddonIds,
+                            addOnIds: detectedAddOnIds,
                             writerRevision: revisionF2,
                         },
                         traceId: traceId,

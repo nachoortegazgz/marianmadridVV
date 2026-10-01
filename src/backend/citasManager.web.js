@@ -119,13 +119,10 @@ function _getCitaMeta(cita) {
   return meta;
 }
 
-function _getNativeAddonIdsForRevalidation(cita) {
+function _getAddOnIdsForRevalidation(cita) {
   const meta = _getCitaMeta(cita);
 
-  const addOnIds =
-    meta.nativeAddonIds ||
-    meta.addOnIds ||
-    [];
+  const addOnIds = meta.addOnIds || [];
 
   if (!Array.isArray(addOnIds)) {
     return [];
@@ -924,12 +921,12 @@ async function _revalidateDualInputSlots(
     f1ResourceId || f2ResourceId || null;
 
   const f1Addons =
-    _getNativeAddonIdsForRevalidation(
+    _getAddOnIdsForRevalidation(
       f1Cita
     );
 
   const f2Addons =
-    _getNativeAddonIdsForRevalidation(
+    _getAddOnIdsForRevalidation(
       f2Cita
     );
 
@@ -941,7 +938,7 @@ async function _revalidateDualInputSlots(
       localEndDate:
         slotF1Input.localEndDate,
       resourceId: selectedResourceId,
-      nativeAddonIds: f1Addons,
+      addOnIds: f1Addons,
       traceId
     });
 
@@ -961,7 +958,7 @@ async function _revalidateDualInputSlots(
       localEndDate:
         slotF2Input.localEndDate,
       resourceId: selectedResourceId,
-      nativeAddonIds: f2Addons,
+      addOnIds: f2Addons,
       traceId
     });
 

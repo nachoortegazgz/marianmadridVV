@@ -64,16 +64,31 @@ test('DTO-01 getConfirmedBookingForDisplay returns whitelisted DTO only', async 
   assert.strictEqual(res.data.bookingStatus, 'CONFIRMED');
 });
 
-test('DTO-02 legacy status row readable via canonical projection', async () => {
+test('DTO-02 legacy status rows are NOT projected (ADR-06 forces migration)', async () => {
   wixDataMock._reset();
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
     _id: 'r2', bookingId: 'BK-78', status: 'CONFIRMED', paymentStatus: 'PAID',
     totalPrice: 30, internalNotes: 'x',
   }]);
   const res = await RW.getConfirmedBookingForDisplay({ bookingId: 'BK-78' });
-  assert.strictEqual(res.ok, true);
+  // ADR-06 / MATRIZ G: bookingStatus es el unico campo fisico canonico. Una fila
+  // que solo tiene `status` no es una reserva confirmada: se rechaza para forzar
+  // la migracion en vez de devolver un DTO con nombre legacy.
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error, 'NOT_CONFIRMED');
+});
+
+test('DTO-02b canonical bookingStatus row is projected', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'r2b', bookingId: 'BK-78b', bookingStatus: 'CONFIRMED', paymentStatus: 'PAID',
+    totalPrice: 30, internalNotes: 'x',
+  }]);
+  const res = await RW.getConfirmedBookingForDisplay({ bookingId: 'BK-78b' });
+  assert.strictEqual(res.ok, true, JSON.stringify(res));
   assert.strictEqual(res.data.bookingStatus, 'CONFIRMED');
   assert.ok(!_deepKeys(res.data).includes('internalNotes'));
+  assert.ok(!_deepKeys(res.data).includes('status'));
 });
 
 test('DTO-03 non-displayable booking states are hidden', async () => {

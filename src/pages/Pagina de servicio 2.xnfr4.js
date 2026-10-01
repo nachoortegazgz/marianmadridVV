@@ -436,5 +436,3 @@ $w.onReady(async () => {
     );
   }
 });
-
-Este código usa únicamente los nombres canónicos de la matriz: `serviceId`, `slug`, `linkedPhases`, `addOnOptions`, `addOnIds`, `mainMedia`, `availableStaff` y `clientHidden`.

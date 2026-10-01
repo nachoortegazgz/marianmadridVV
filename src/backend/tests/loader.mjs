@@ -103,8 +103,11 @@ export const Permissions = { Admin: 'ADMIN', SiteMember: 'MEMBER', Public: 'PUBL
 export const currentMember = fnProxy;
 export const locations = fnProxy;
 export const bookingsBackend = fnProxy;
-export const paymentsBackend = fnProxy;
-export const transactions = fnProxy;
+export const bookings = fnProxy;
+export const checkout = fnProxy;
+export const orders = fnProxy;
+export const elevate = fnProxy;
+export const getSecret = fnProxy;
 export const media = fnProxy;
 export const crypto = fnProxy;
 export function _namedExportFallback(name) { return fnProxy; }

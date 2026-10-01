@@ -72,7 +72,20 @@ function _readImport2Field(item, field) {
   );
 }
 
-function _parseImport2Addons(value) {
+// MATRIZ B + SDK nativo Wix (@wix/auto_sdk_bookings_add-ons: addOnId, name,
+// price, description). Alias eliminados: addonId, nombre, precio, title.
+function _normalizeAddOnOption(addOn) {
+  if (!addOn || typeof addOn !== "object") return null;
+  return {
+    addOnId: _safeTrim(addOn.addOnId),
+    name: _safeTrim(addOn.name),
+    description: _safeTrim(addOn.description),
+    price: Number(addOn.price) || 0,
+    active: addOn.active === true,
+  };
+}
+
+function _parseAddOnOptions(value) {
   if (Array.isArray(value)) return value;
   if (typeof value !== "string") return [];
   try {
@@ -81,16 +94,6 @@ function _parseImport2Addons(value) {
   } catch (_) {
     return [];
   }
-}
-
-function _normalizeImport2Addon(addon) {
-  if (!addon || typeof addon !== "object") return null;
-  return {
-    ...addon,
-    id: _safeTrim(addon.id || addon._id || addon.addonId),
-    nombre: _safeTrim(addon.nombre || addon.name || addon.title),
-    precio: Number(addon.precio ?? addon.price ?? 0) || 0
-  };
 }
 
 const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
@@ -255,34 +258,32 @@ async function _getStaffDisplayNamePublic(resourceId) {
   }
 }
 
-function _getRequestedAddonContext(service, requestedAddonIds) {
+function _getRequestedAddonContext(service, requestedAddOnIds) {
   const requested = new Set(
-    (Array.isArray(requestedAddonIds) ? requestedAddonIds : [])
+    (Array.isArray(requestedAddOnIds) ? requestedAddOnIds : [])
       .map((id) => _safeTrim(id))
       .filter(Boolean)
   );
-  const addons = Array.isArray(service?.metadata?.addons)
-    ? service.metadata.addons
+  const addOnOptions = Array.isArray(service?.addOnOptions)
+    ? service.addOnOptions
     : [];
-  const selected = addons.filter((addon) => {
-    const id = _safeTrim(addon?.id);
-    const nativeId = _safeTrim(addon?.nativeId);
-    return requested.has(id) || requested.has(nativeId);
+  const selected = addOnOptions.filter((addOn) => {
+    return requested.has(_safeTrim(addOn?.addOnId));
   });
   return {
-    nativeAddonIds: Array.from(
+    addOnIds: Array.from(
       new Set(
         selected
-          .map((addon) => _safeTrim(addon?.nativeId || addon?.id))
+          .map((addOn) => _safeTrim(addOn?.addOnId))
           .filter((id) => _looksLikeGuid(id))
       )
     ),
-    addons: selected
+    addOns: selected
   };
 }
 
-function _resolveAddonContextInternal(service, requestedAddonIds) {
-  return _getRequestedAddonContext(service, requestedAddonIds);
+function _resolveAddonContextInternal(service, requestedAddOnIds) {
+  return _getRequestedAddonContext(service, requestedAddOnIds);
 }
 
 async function _verifyRequiredStaffViaGet({
@@ -290,7 +291,7 @@ async function _verifyRequiredStaffViaGet({
   start,
   end,
   requiredResourceId,
-  nativeAddonIds,
+  addOnIds,
   traceId
 }) {
   const getPayload = {
@@ -303,8 +304,8 @@ async function _verifyRequiredStaffViaGet({
       { resourceTypeId: STAFF_RESOURCE_TYPE_ID, resourceIds: [requiredResourceId] }
     ]
   };
-  if (Array.isArray(nativeAddonIds) && nativeAddonIds.length > 0) {
-    getPayload.customerChoices = { addOnIds: nativeAddonIds };
+  if (Array.isArray(addOnIds) && addOnIds.length > 0) {
+    getPayload.customerChoices = { addOnIds: addOnIds };
   }
   try {
     const result = await _executeWithRetry(
@@ -369,9 +370,9 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
       );
     } else {
       result = await withTimeout(
-        () => wixData.query(SERVICIOS_COL).eq("slugUrl", clean).limit(1).find({ suppressAuth: true }),
+        () => wixData.query(SERVICIOS_COL).eq("slug", clean).limit(1).find({ suppressAuth: true }),
         WATCHDOG_TIMEOUT_MS,
-        "getServiceBySlugOrId:slugUrl"
+        "getServiceBySlugOrId:slug"
       );
 
       if (!result?.items?.[0] && _looksLikeGuid(clean)) {
@@ -399,8 +400,8 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
     if (mapped.serviceId) {
       _cacheSetBounded(serviceCatalogRAM, mapped.serviceId, cacheEntry, CACHE_MAX_SIZE);
     }
-    if (mapped.slugUrl) {
-      _cacheSetBounded(serviceCatalogRAM, mapped.slugUrl, cacheEntry, CACHE_MAX_SIZE);
+    if (mapped.slug) {
+      _cacheSetBounded(serviceCatalogRAM, mapped.slug, cacheEntry, CACHE_MAX_SIZE);
     }
 
     return { status: "SUCCESS", data: mapped, error: null };
@@ -435,9 +436,11 @@ export async function _mapServiceImport2ToUX(service, traceId) {
   if (!_looksLikeGuid(serviceId)) {
     throw new Error("Catalog serviceId is missing or invalid.");
   }
-  const hidden = _readImport2Field(service, "hidden") === true;
+  // MATRIZ D: clientHidden es el canonico de visibilidad (legacy hiddenClient /
+  // ocultoCliente / hidden eliminados).
+  const clientHidden = _readImport2Field(service, "clientHidden") === true;
   const allowCombine =
-    !hidden && _readImport2Field(service, "allowCombine") === true;
+    !clientHidden && _readImport2Field(service, "allowCombine") === true;
   const linkedPhases = _safeTrim(_readImport2Field(service, "linkedPhases"));
 
   if (allowCombine && !_looksLikeGuid(linkedPhases)) {
@@ -462,13 +465,14 @@ export async function _mapServiceImport2ToUX(service, traceId) {
     if (resolved > 0) phase2Duration = resolved;
   }
 
-  const totalDuration = Number(_readImport2Field(service, "totalDuration")) || 0;
-  const buffer = Number(_readImport2Field(service, "buffer")) || 0;
+  const declaredTotalDuration = Number(_readImport2Field(service, "totalDuration")) || 0;
   const title = _safeTrim(_readImport2Field(service, "title")) || "Service";
   const price = Number(_readImport2Field(service, "price")) || 0;
   const currency = _safeTrim(_readImport2Field(service, "currency")) || "EUR";
   const pricingModel = _safeTrim(_readImport2Field(service, "pricingModel")) || null;
-  const slugUrl = _safeTrim(_readImport2Field(service, "slugUrl")) || null;
+  // MATRIZ A: slug es la identidad publica canonica (legacy slugUrl eliminado).
+  const slug = _safeTrim(_readImport2Field(service, "slug")) || null;
+  // serviceType es ID nativo Wix (ServiceType: APPOINTMENT/EVENT).
   const serviceType = _safeTrim(_readImport2Field(service, "serviceType")) || null;
   const sku = _safeTrim(_readImport2Field(service, "sku")) || null;
   const depositAmount = Number(_readImport2Field(service, "depositAmount")) || 0;
@@ -476,23 +480,23 @@ export async function _mapServiceImport2ToUX(service, traceId) {
   const onlinePayment = _readImport2Field(service, "onlinePayment") === true;
   const inPersonPayment = _readImport2Field(service, "inPersonPayment") === true;
   const taxIncluded = _readImport2Field(service, "taxIncluded") === true;
-  const taxRate = Number(_readImport2Field(service, "taxRate")) || 0;
   const categoryId = _safeTrim(_readImport2Field(service, "categoryId")) || null;
   const locationId = _safeTrim(_readImport2Field(service, "locationId")) || null;
   const location = _safeTrim(_readImport2Field(service, "location")) || null;
-  const imageUrl = _safeTrim(_readImport2Field(service, "mainMedia")) || "";
-  const shortDescription = _safeTrim(_readImport2Field(service, "tagLine")) || null;
-  const longDescription = _safeTrim(_readImport2Field(service, "description")) || null;
-  const internalNotes = _safeTrim(_readImport2Field(service, "internalNotes")) || null;
+  // MATRIZ C: mainMedia es el canonico (legacy imageUrl/mainMediaUrl eliminados).
+  const mainMedia = _safeTrim(_readImport2Field(service, "mainMedia")) || "";
+  const tagLine = _safeTrim(_readImport2Field(service, "tagLine")) || null;
+  const description = _safeTrim(_readImport2Field(service, "description")) || null;
 
   const durationRange = readDurationRange(service);
 
-  const estimatedTotal =
-    totalDuration ||
+  // MATRIZ E: fallback 30 eliminado. La duracion es la suma exacta de fases
+  // (CMS 2.1) o el valor declarado; si no hay dato, 0 (no inventar duracion).
+  const totalDuration =
+    declaredTotalDuration ||
     (allowCombine
       ? phase1Duration + exposureDuration + phase2Duration
-      : phase1Duration) ||
-    30;
+      : phase1Duration);
 
   const availableStaff = cleanGuidList(_readImport2Field(service, "availableStaff"));
 
@@ -508,62 +512,44 @@ export async function _mapServiceImport2ToUX(service, traceId) {
     })
   );
 
-  const addons = _parseImport2Addons(_readImport2Field(service, "addOnOptions"))
-    .map(_normalizeImport2Addon)
+  // MATRIZ B: addOnOptions canonico (legacy addons/addOns/addonsPrecio eliminados).
+  const addOnOptions = _parseAddOnOptions(_readImport2Field(service, "addOnOptions"))
+    .map(_normalizeAddOnOption)
     .filter(Boolean);
 
+  // Contrato canonico unico. Sin alias, sin capa `metadata`, sin campos fiscales
+  // (margin/tipoImpositivo/codigoImpuesto/internalNotes) ni `buffer` (MATRIZ E).
   return {
     serviceId,
-    slugUrl,
-    serviceType,
+    slug,
+    title,
+    description,
+    tagLine,
+    mainMedia,
+    price,
+    currency,
     sku,
     categoryId,
+    serviceType,
     locationId,
-    localizacion: location,
-    internalNotes,
-    linkFases: allowCombine ? linkedPhases : null,
-    permitirCombinar: allowCombine,
-    tiempoFase1: phase1Duration,
-    tiempoExposicion: exposureDuration,
-    tiempoFase2: phase2Duration,
-    duracionTotal: totalDuration,
-    buffer,
-    availableStaff,
-    staffOptions,
-    depositAmount,
-    depositType,
-    onlinePayment,
-    inPersonPayment,
-    taxIncluded,
-    taxRate,
-    pricingModel,
-    currency,
-    linkedPhases: allowCombine ? linkedPhases : null,
+    location,
     allowCombine,
+    linkedPhases: allowCombine ? linkedPhases : null,
     phase1Duration,
     exposureDuration,
     phase2Duration,
-    totalDuration: estimatedTotal,
-    hidden,
-    durationRange,
-    metadata: {
-      titulo: title,
-      tituloServicio: title,
-      precio: price,
-      duracionTotal: estimatedTotal,
-      localizacion: location,
-      resumenCorto: shortDescription,
-      descripcionLarga: longDescription,
-      pricingModel,
-      addons,
-      addonsPrecio: addons.map((addon) => Number(addon?.precio || 0)),
-      imageUrl,
-      currency,
-      taxRate,
-      pricing: { base: price, currency },
-      timing: { estimatedTotal, totalDuration: estimatedTotal },
-      durationRange
-    }
+    totalDuration,
+    availableStaff,
+    staffOptions,
+    addOnOptions,
+    depositAmount,
+    depositType,
+    pricingModel,
+    onlinePayment,
+    inPersonPayment,
+    taxIncluded,
+    clientHidden,
+    durationRange
   };
 }
 
@@ -623,13 +609,49 @@ export const resolveServiceId = webMethod(
   }
 );
 
+// Public service DTO whitelist (MATRIZ I: cero DTOs con campos fiscales, costes
+// o notas internas). El contrato canonico ya no contiene alias, por lo que esta
+// whitelist es la unica garantia de que ningun campo interno se filtra.
+const _PUBLIC_SERVICE_FIELDS = Object.freeze([
+  "serviceId",
+  "slug",
+  "title",
+  "description",
+  "tagLine",
+  "mainMedia",
+  "price",
+  "currency",
+  "sku",
+  "categoryId",
+  "serviceType",
+  "locationId",
+  "location",
+  "allowCombine",
+  "linkedPhases",
+  "phase1Duration",
+  "exposureDuration",
+  "phase2Duration",
+  "totalDuration",
+  "availableStaff",
+  "staffOptions",
+  "addOnOptions",
+  "depositAmount",
+  "depositType",
+  "pricingModel",
+  "onlinePayment",
+  "inPersonPayment",
+  "taxIncluded",
+  "clientHidden",
+  "durationRange"
+]);
+
 export function _toPublicService(service) {
   if (!service || typeof service !== "object") return null;
-  const { linkFases, internalNotes, ...publicService } = service;
-  return {
-    ...publicService,
-    linkedPhases: publicService.linkedPhases || null
-  };
+  const dto = {};
+  for (const key of _PUBLIC_SERVICE_FIELDS) {
+    if (service[key] !== undefined && service[key] !== null) dto[key] = service[key];
+  }
+  return dto;
 }
 
 // ============================================================================
@@ -656,9 +678,10 @@ function _toConfirmationDto(item) {
   for (const key of _CONFIRMATION_DTO_FIELDS) {
     if (item[key] !== undefined && item[key] !== null) dto[key] = item[key];
   }
-  // Canonical read with legacy transition fallback (EOL 31/12/2026, ADR-06):
-  const status = item.bookingStatus ?? item.status;
-  if (status !== undefined && status !== null) dto.bookingStatus = status;
+  // ADR-06: bookingStatus es el campo fisico canonico (legacy status retirado).
+  if (item.bookingStatus !== undefined && item.bookingStatus !== null) {
+    dto.bookingStatus = item.bookingStatus;
+  }
   if (item.paymentStatus !== undefined) dto.paymentStatus = item.paymentStatus;
   return dto;
 }
@@ -686,7 +709,7 @@ export const getConfirmedBookingForDisplay = webMethod(
       );
       const item = res?.items?.[0] || null;
       if (!item) return { ok: false, data: null, error: "NOT_FOUND" };
-      const status = item.bookingStatus ?? item.status;
+      const status = item.bookingStatus;
       if (
         status !== BOOKING_STATUS.CONFIRMED &&
         status !== BOOKING_STATUS.PENDING
@@ -743,7 +766,7 @@ export const getAvailableSlots = webMethod(
       const requestedResourceId = _normalizeResourceIds(resourceId, traceId);
       const addonContext = _resolveAddonContextInternal(service, addOnIds);
 
-      if (addonContext.nativeAddonIds.length > 0 && service.durationRange) {
+      if (addonContext.addOnIds.length > 0 && service.durationRange) {
         return {
           status: "ERROR",
           data: null,
@@ -779,8 +802,8 @@ export const getAvailableSlots = webMethod(
         ];
       }
 
-      if (addonContext.nativeAddonIds.length > 0) {
-        payload.customerChoices = { addOnIds: addonContext.nativeAddonIds };
+      if (addonContext.addOnIds.length > 0) {
+        payload.customerChoices = { addOnIds: addonContext.addOnIds };
       }
 
       const result = await _executeWithRetry(
@@ -884,8 +907,8 @@ export const getAvailableDays = webMethod(
         ];
       }
 
-      if (addonContext.nativeAddonIds.length > 0 && !service.durationRange) {
-        payload.customerChoices = { addOnIds: addonContext.nativeAddonIds };
+      if (addonContext.addOnIds.length > 0 && !service.durationRange) {
+        payload.customerChoices = { addOnIds: addonContext.addOnIds };
       }
 
       const result = await _executeWithRetry(
@@ -1035,7 +1058,7 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
   const requestedResourceId = _normalizeResourceIds(resourceId, traceId);
   const addonContext = _resolveAddonContextInternal(service, addOnIds);
 
-  if (addonContext.nativeAddonIds.length > 0 && service.durationRange) {
+  if (addonContext.addOnIds.length > 0 && service.durationRange) {
     return {
       status: "ERROR",
       data: null,
@@ -1061,8 +1084,8 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
         { resourceTypeId: STAFF_RESOURCE_TYPE_ID, resourceIds: requestedResourceId }
       ];
     }
-    if (addonContext.nativeAddonIds.length > 0) {
-      payload.customerChoices = { addOnIds: addonContext.nativeAddonIds };
+    if (addonContext.addOnIds.length > 0) {
+      payload.customerChoices = { addOnIds: addonContext.addOnIds };
     }
     return payload;
   };
@@ -1204,7 +1227,7 @@ export async function _resolveStaffForSlotInternal({
     };
   }
 
-  const normalizedAddonIds = Array.from(
+  const normalizedAddOnIds = Array.from(
     new Set(
       (Array.isArray(addOnIds) ? addOnIds : [])
         .map((id) => _safeTrim(id))
@@ -1217,7 +1240,7 @@ export async function _resolveStaffForSlotInternal({
     localStartDate: f1Start,
     localEndDate: f1End,
     resourceId: requestedResourceId || null,
-    nativeAddonIds: normalizedAddonIds,
+    addOnIds: normalizedAddOnIds,
     traceId: activeTraceId
   });
 
@@ -1249,7 +1272,7 @@ export async function _resolveStaffForSlotInternal({
       localStartDate: f2Start,
       localEndDate: f2End,
       resourceId: finalResourceId,
-      nativeAddonIds: normalizedAddonIds,
+      addOnIds: normalizedAddOnIds,
       traceId: activeTraceId
     });
 
@@ -1337,7 +1360,7 @@ export async function revalidateExactAvailabilitySlot({
   localStartDate,
   localEndDate,
   resourceId,
-  nativeAddonIds = [],
+  addOnIds = [],
   traceId
 }) {
   const activeTraceId = traceId || makeTraceId("exact-slot");
@@ -1357,9 +1380,9 @@ export async function revalidateExactAvailabilitySlot({
   }
 
   try {
-    const normalizedAddonIds = Array.from(
+    const normalizedAddOnIds = Array.from(
       new Set(
-        (Array.isArray(nativeAddonIds) ? nativeAddonIds : [])
+        (Array.isArray(addOnIds) ? addOnIds : [])
           .map((id) => _safeTrim(id))
           .filter((id) => _looksLikeGuid(id))
       )
@@ -1375,7 +1398,7 @@ export async function revalidateExactAvailabilitySlot({
         ? earlyServiceConfig.data.durationRange
         : null;
 
-    if (normalizedAddonIds.length > 0 && serviceDurationRange) {
+    if (normalizedAddOnIds.length > 0 && serviceDurationRange) {
       return {
         status: "ERROR",
         data: null,
@@ -1389,7 +1412,7 @@ export async function revalidateExactAvailabilitySlot({
 
     let rawSlot = null;
 
-    if (normalizedAddonIds.length > 0) {
+    if (normalizedAddOnIds.length > 0) {
       const listPayload = {
         serviceId: String(resolvedServiceId),
         fromLocalDate: start,
@@ -1398,7 +1421,7 @@ export async function revalidateExactAvailabilitySlot({
         bookable: true,
         locations: [LOCATION_TS],
         includeResourceTypeIds: [STAFF_RESOURCE_TYPE_ID],
-        customerChoices: { addOnIds: normalizedAddonIds }
+        customerChoices: { addOnIds: normalizedAddOnIds }
       };
 
       if (requiredResourceId) {
@@ -1461,7 +1484,7 @@ export async function revalidateExactAvailabilitySlot({
         start,
         end,
         requiredResourceId,
-        nativeAddonIds: normalizedAddonIds,
+        addOnIds: normalizedAddOnIds,
         traceId: activeTraceId
       });
 
