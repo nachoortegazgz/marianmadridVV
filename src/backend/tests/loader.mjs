@@ -98,7 +98,13 @@ const fnProxy = new Proxy(function () {}, {
   },
   apply: () => fnProxy,
 });
-export const webMethod = (...args) => (handlerFn) => handlerFn;
+export const webMethod = (...args) => {
+  // Real Velo semantics: webMethod(perm..., handler) returns the handler
+  // (optionally wrapped). Tests call the exported handlers directly, so the
+  // last function argument must be returned as-is.
+  const fns = args.filter((a) => typeof a === 'function');
+  return fns.length ? fns[fns.length - 1] : (handlerFn) => handlerFn;
+};
 export const Permissions = { Admin: 'ADMIN', SiteMember: 'MEMBER', Public: 'PUBLIC', Anyone: 'ANYONE' };
 export const currentMember = fnProxy;
 export const locations = fnProxy;
@@ -107,6 +113,14 @@ export const paymentsBackend = fnProxy;
 export const transactions = fnProxy;
 export const media = fnProxy;
 export const crypto = fnProxy;
+// Named SDK exports imported by backend code (offline stubs):
+export const availabilityTimeSlots = fnProxy;
+export const bookings = fnProxy;
+export const checkout = fnProxy;
+export const orders = fnProxy;
+export const elevate = fnProxy;
+export const createClient = () => fnProxy;
+export const getSecret = async () => "mock-secret";
 export function _namedExportFallback(name) { return fnProxy; }
 const handler = { get: (t, p) => {
   if (p === 'then') return undefined;
@@ -130,7 +144,9 @@ export default wixDataMock;
 // ---------------------------------------------------------------------------
 
 export async function resolve(specifier, context, nextResolve) {
-  if (specifier.startsWith('wix-')) {
+  if (specifier.startsWith('wix-') || specifier.startsWith('@wix/')) {
+    // Offline harness: every Wix SDK package resolves to the generic stub.
+    // wix-data keeps its dedicated in-memory mock below.
     return { url: 'mock:' + specifier, shortCircuit: true };
   }
   if (specifier.startsWith('backend/') || specifier.startsWith('public/')) {

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ControlOperativo",
+  "description": "SSOT v7.0 - Coleccion operativa 8-en-1 (BIBLIA 12 / ADR-05). Discriminador: controlType. WEBHOOK_EVENT es append-only; el resto es purgable por expiresAt.",
+  "type": "object",
+  "required": ["controlType", "dedupeKey", "status"],
+  "properties": {
+    "controlType": {
+      "type": "string",
+      "enum": [
+        "SLOT_LOCK",
+        "WEBHOOK_EVENT",
+        "RATE_LIMIT",
+        "BOOKING_TX",
+        "COMPENSATION",
+        "ALERT",
+        "DAYS_CACHE",
+        "DUAL_CACHE"
+      ]
+    },
+    "dedupeKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Clave de idempotencia unica por dominio. Indexada."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ACTIVE",
+        "PENDING",
+        "EXECUTED",
+        "FAILED",
+        "EXPIRED",
+        "BLOCKED",
+        "CLOSED",
+        "CANCELLED"
+      ]
+    },
+    "traceId": {
+      "type": "string",
+      "description": "Trazabilidad E2E (correlacion con CitasF2/MovimientosCaja)."
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "TTL para subtipos purgables. Ausente = retencion indefinida (WEBHOOK_EVENT)."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Datos especificos del subtipo (slotId, resourceId, rateLimitSurface, txState, etc.). Nunca datos fiscales ni PII.",
+      "additionalProperties": true
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "controlType": { "const": "WEBHOOK_EVENT" } } },
+      "then": {
+        "description": "WEBHOOK_EVENT: append-only (hook data.js prohibe update/remove). No lleva expiresAt.",
+        "not": { "required": ["expiresAt"] }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "controlType": { "enum": ["SLOT_LOCK", "RATE_LIMIT", "DAYS_CACHE", "DUAL_CACHE"] }
+        }
+      },
+      "then": { "required": ["expiresAt"] }
+    }
+  ],
+  "additionalProperties": false
+}

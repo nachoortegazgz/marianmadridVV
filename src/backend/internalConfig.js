@@ -632,7 +632,9 @@ export const BOOKING_FIELDS = Object.freeze({
     REFUNDED_DATE: "refundedDate",
     PAYMENT_METHOD: "paymentMethod",
     NOTES: "notes",
-    ADDONS: "addons",
+    // MATRIZ B alias "addons" ERRADICADO (SSOT v7.0 FASE4): el campo canonico
+    // de add-ons embebidos es addOnOptions en ServiciosCatalogo; CitasF2 no
+    // persiste este campo y ningun consumidor usaba BOOKING_FIELDS.ADDONS.
     CUSTOM_FIELDS: "customFields",
 });
 

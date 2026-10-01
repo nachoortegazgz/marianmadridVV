@@ -1,16 +1,67 @@
 {
+  "_comment": "SSOT v7.0 FASE3 (resolucion pendiente): permisos explicitos por modulo web exportado desde src/backend/*.web.js. Denegacion por defecto para anonymous. siteMember puede invocar superficies de cliente (reservas/horario); las superficies fiscales/caja/inventario/seguridad quedan restringidas a siteOwner.",
   "web-methods": {
-    "*": {
+    "reservas": {
       "*": {
-        "siteOwner": {
-          "invoke": true
-        },
-        "siteMember": {
-          "invoke": true
-        },
-        "anonymous": {
-          "invoke": false
-        }
+        "siteOwner": { "invoke": true },
+        "siteMember": { "invoke": true },
+        "anonymous": { "invoke": false }
+      }
+    },
+    "citasManager": {
+      "*": {
+        "siteOwner": { "invoke": true },
+        "siteMember": { "invoke": true },
+        "anonymous": { "invoke": false }
+      }
+    },
+    "horario": {
+      "*": {
+        "siteOwner": { "invoke": true },
+        "siteMember": { "invoke": true },
+        "anonymous": { "invoke": false }
+      }
+    },
+    "cajas": {
+      "*": {
+        "siteOwner": { "invoke": true },
+        "siteMember": { "invoke": false },
+        "anonymous": { "invoke": false }
+      }
+    },
+    "fiscalAggregator": {
+      "*": {
+        "siteOwner": { "invoke": true },
+        "siteMember": { "invoke": false },
+        "anonymous": { "invoke": false }
+      }
+    },
+    "fiscalDocuments": {
+      "*": {
+        "siteOwner": { "invoke": true },
+        "siteMember": { "invoke": false },
+        "anonymous": { "invoke": false }
+      }
+    },
+    "inventario": {
+      "*": {
+        "siteOwner": { "invoke": true },
+        "siteMember": { "invoke": false },
+        "anonymous": { "invoke": false }
+      }
+    },
+    "security": {
+      "*": {
+        "siteOwner": { "invoke": true },
+        "siteMember": { "invoke": false },
+        "anonymous": { "invoke": false }
+      }
+    },
+    "marianAssistant": {
+      "*": {
+        "siteOwner": { "invoke": true },
+        "siteMember": { "invoke": true },
+        "anonymous": { "invoke": false }
       }
     }
   }

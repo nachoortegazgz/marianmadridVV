@@ -392,7 +392,8 @@ async function _validateLinkedPhaseService(linkedPhases, parentLocationId, trace
         );
     }
 
-    if (service.hidden === true) {
+    // MATRIZ D SSOT v7.0: canonical visibility key is clientHidden.
+    if (service.clientHidden === true) {
         throw createBookingError(
             ERROR_CODES.SERVICE_NOT_FOUND,
             `Linked phase service ${linkedServiceId} is hidden`,

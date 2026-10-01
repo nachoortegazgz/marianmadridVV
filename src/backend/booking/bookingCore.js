@@ -809,11 +809,13 @@ export async function _getDualPairFromCache(pairToken, traceId, expected = {}) {
         });
         return null;
     }
-    if (expected.phase2ServiceId) {
-        const cachedPhase2 = _safeTrim(item.phase2ServiceId);
-        if (cachedPhase2 !== _safeTrim(expected.phase2ServiceId)) {
-            log.warn("_getDualPairFromCache: phase2ServiceId mismatch", {
-                pairToken, traceId, cached: cachedPhase2, expected: expected.phase2ServiceId,
+    // MATRIZ A: alias phase2ServiceId erradicado. El par de fases F2 se lee
+    // exclusivamente desde la clave canonica linkedPhases (identidad G).
+    if (expected.linkedPhases) {
+        const cachedLinked = _safeTrim(item.linkedPhases);
+        if (cachedLinked !== _safeTrim(expected.linkedPhases)) {
+            log.warn("_getDualPairFromCache: linkedPhases mismatch", {
+                pairToken, traceId, cached: cachedLinked, expected: expected.linkedPhases,
             });
             return null;
         }
@@ -1013,7 +1015,7 @@ export async function getCertifiedDualSlotsOptimized(serviceId, resourceId, date
                         fase2: { slotRef: p.slotF2, resourceId: p.resourceId },
                         pairToken: p.pairToken,
                         serviceId: p.serviceId,
-                        linkedPhases: p.phase2ServiceId,
+                        linkedPhases: p.linkedPhases,
                         dateYmd: p.dateYmd,
                     })),
                     error: null,

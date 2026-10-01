@@ -233,11 +233,11 @@ function auditFlow1_ReservaSimpleOnline() {
     const doubleEntryValid = Math.abs(asientoExpected.totalDebe - asientoExpected.totalHaber) < 0.01;
     assert(doubleEntryValid, "Paso 4: Asiento contable no cuadra (partida doble)", "CRITICAL");
 
-    // Verificar cuentas PGC canonicas
+    // Verificar cuentas PGC canonicas (claves canonicas internas: BANKS/SERVICE_REVENUE/VAT_OUTPUT)
     const pgcAccountsValid = [
-        CUENTAS_PGC.BANCOS, // 572000
-        CUENTAS_PGC.PRESTACIONES_SERVICIOS, // 705000
-        CUENTAS_PGC.IVA_REPERCUTIDO, // 477000
+        CUENTAS_PGC.BANKS, // 572000
+        CUENTAS_PGC.SERVICE_REVENUE, // 705000
+        CUENTAS_PGC.VAT_OUTPUT, // 477000
     ].every(acc => acc && /^\d{6}$/.test(acc));
     assert(pgcAccountsValid, "Paso 4: Cuentas PGC no tienen formato canonico (6 digitos)", "CRITICAL");
 
@@ -597,16 +597,16 @@ function auditFlow5_CobroEstadoPago() {
 
     // Paso 1: Verificar transición de estados de pago
     const paymentStateTransition = {
-        initial: PAYMENT_STATUS.UNPAID,
+        initial: PAYMENT_STATUS.NOT_PAID,
         afterCheckout: PAYMENT_STATUS.PENDING_PAYMENT,
         afterWebhook: PAYMENT_STATUS.PAID,
         validTransitions: [
-            `${PAYMENT_STATUS.UNPAID} -> ${PAYMENT_STATUS.PENDING_PAYMENT}`,
+            `${PAYMENT_STATUS.NOT_PAID} -> ${PAYMENT_STATUS.PENDING_PAYMENT}`,
             `${PAYMENT_STATUS.PENDING_PAYMENT} -> ${PAYMENT_STATUS.PAID}`,
         ],
     };
 
-    const step1Valid = paymentStateTransition.initial === PAYMENT_STATUS.UNPAID &&
+    const step1Valid = paymentStateTransition.initial === PAYMENT_STATUS.NOT_PAID &&
                        paymentStateTransition.afterWebhook === PAYMENT_STATUS.PAID;
     flowResult.steps.push({ step: 1, name: "Verificar transición de estados de pago", valid: step1Valid });
 
@@ -885,9 +885,9 @@ function auditFlow7_VentaOnline() {
         totalDebe: 150.00,
         totalHaber: 150.00,
         lines: [
-            { accountCode: CUENTAS_PGC.BANCOS, debit: 150.00, credit: 0 },
+            { accountCode: CUENTAS_PGC.BANKS, debit: 150.00, credit: 0 },
             { accountCode: "700000", debit: 0, credit: 123.97 }, // Venta de mercaderías
-            { accountCode: CUENTAS_PGC.IVA_REPERCUTIDO, debit: 0, credit: 26.03 },
+            { accountCode: CUENTAS_PGC.VAT_OUTPUT, debit: 0, credit: 26.03 },
         ],
     };
 
