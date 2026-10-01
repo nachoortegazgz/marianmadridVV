@@ -36,14 +36,21 @@ let bridge = null;
 function parseUrlParams() {
   const query = wixLocation.query || {};
 
+  const rawAddOnIds = Array.isArray(query.addOnIds)
+    ? query.addOnIds
+    : _safeTrim(query.addOnIds || "").split(",");
+
   return {
     serviceId: _safeTrim(query.serviceId || ""),
     slug: _safeSlugOrId(query.slug || ""),
     referral: _safeTrim(query.referral || ""),
-    addOnIds: _safeTrim(query.addOnIds || "")
-      .split(",")
-      .map(_safeTrim)
-      .filter(Boolean)
+    addOnIds: Array.from(
+      new Set(
+        rawAddOnIds
+          .map((value) => _safeTrim(value))
+          .filter(Boolean)
+      )
+    ).slice(0, 21)
   };
 }
 
@@ -106,11 +113,10 @@ function getReferenceId(value) {
 
   if (value && typeof value === "object") {
     return _safeTrim(
-      value.id ||
       value.addOnId ||
       value.serviceId ||
-      value.referenceId ||
       value.nativeId ||
+      value.id ||
       value.value ||
       ""
     );
@@ -152,8 +158,12 @@ function filterAllowedAddOnIds(service, requestedIds) {
   return Array.from(
     new Set(
       requestedIds
-        .map(_safeTrim)
-        .filter((id) => id && allowedIds.has(id))
+        .map((addOn) => getReferenceId(addOn))
+        .filter(
+          (addOnId) =>
+            addOnId &&
+            allowedIds.has(addOnId)
+        )
     )
   ).slice(0, 21);
 }
@@ -187,18 +197,15 @@ function normalizeService(data, params) {
     );
   }
 
-  const addOnOptions = Array.isArray(
-    data.addOnOptions
-  )
-    ? data.addOnOptions
-    : [];
-
   const linkedPhases = Array.isArray(
     data.linkedPhases
   )
     ? data.linkedPhases
+        .map((phase) => getReferenceId(phase))
+        .filter(Boolean)
     : data.linkedPhases
-      ? [data.linkedPhases]
+      ? [getReferenceId(data.linkedPhases)]
+          .filter(Boolean)
       : [];
 
   return {
@@ -216,7 +223,11 @@ function normalizeService(data, params) {
     mainMedia: _safeTrim(
       data.mainMedia || ""
     ),
-    addOnOptions,
+    addOnOptions: Array.isArray(
+      data.addOnOptions
+    )
+      ? data.addOnOptions
+      : [],
     linkedPhases,
     availableStaff: Array.isArray(
       data.availableStaff
@@ -226,7 +237,10 @@ function normalizeService(data, params) {
     clientHidden: data.clientHidden === true,
     allowCombine: data.allowCombine === true,
     referral: params.referral,
-    preselectedAddOnIds: params.addOnIds,
+    preselectedAddOnIds: filterAllowedAddOnIds(
+      data,
+      params.addOnIds
+    ),
     timeZone: "Europe/Madrid",
     currencyCode: _safeTrim(
       data.currencyCode || "EUR"
@@ -235,8 +249,15 @@ function normalizeService(data, params) {
 }
 
 async function loadServiceContext(params) {
-  const lookup = currentServiceId || currentSlug;
-  const result = await getServiceBySlugOrId(lookup);
+  const lookup =
+    currentServiceId ||
+    currentSlug ||
+    params.serviceId ||
+    params.slug;
+
+  const result = await getServiceBySlugOrId(
+    lookup
+  );
 
   if (
     !result ||
@@ -305,20 +326,23 @@ async function handleAvailability(payload, reply) {
   );
 
   const lookup = getActiveServiceLookup();
-  const timeout = UI?.FRONTEND_API_TIMEOUT_MS || 60000;
+
+  const timeout =
+    UI?.FRONTEND_API_TIMEOUT_MS || 60000;
 
   try {
     let result;
 
     if (action === "days") {
       result = await withTimeout(
-        () => getAvailableDays(
-          lookup,
-          payload.resourceId || null,
-          Number(payload.year),
-          Number(payload.month),
-          addOnIds
-        ),
+        () =>
+          getAvailableDays(
+            lookup,
+            payload.resourceId || null,
+            Number(payload.year),
+            Number(payload.month),
+            addOnIds
+          ),
         timeout,
         "getAvailableDays"
       );
@@ -328,19 +352,20 @@ async function handleAvailability(payload, reply) {
       );
 
       result = await withTimeout(
-        () => currentService.allowCombine
-          ? getCertifiedDualSlots(
-              lookup,
-              payload.resourceId || null,
-              dateYmd,
-              addOnIds
-            )
-          : getAvailableSlots(
-              lookup,
-              payload.resourceId || null,
-              dateYmd,
-              addOnIds
-            ),
+        () =>
+          currentService.allowCombine
+            ? getCertifiedDualSlots(
+                lookup,
+                payload.resourceId || null,
+                dateYmd,
+                addOnIds
+              )
+            : getAvailableSlots(
+                lookup,
+                payload.resourceId || null,
+                dateYmd,
+                addOnIds
+              ),
         timeout,
         currentService.allowCombine
           ? "getCertifiedDualSlots"
@@ -369,6 +394,11 @@ async function handleAvailability(payload, reply) {
       payload
     );
   } catch (error) {
+    console.error(
+      "[calendario-2] Error de disponibilidad",
+      error?.message
+    );
+
     reply(
       MESSAGE_TYPES.AVAIL,
       createResultError(
@@ -424,13 +454,14 @@ async function handleSelection(payload, reply) {
 
   try {
     const result = await withTimeout(
-      () => resolveStaffForSlot(
-        getActiveServiceLookup(),
-        start,
-        payload.resourceId || null,
-        addOnIds,
-        end
-      ),
+      () =>
+        resolveStaffForSlot(
+          getActiveServiceLookup(),
+          start,
+          payload.resourceId || null,
+          addOnIds,
+          end
+        ),
       UI?.FRONTEND_API_TIMEOUT_MS || 60000,
       "resolveStaffForSlot"
     );
@@ -445,6 +476,11 @@ async function handleSelection(payload, reply) {
       payload
     );
   } catch (error) {
+    console.error(
+      "[calendario-2] Error al validar profesional",
+      error?.message
+    );
+
     reply(
       MESSAGE_TYPES.SELECT,
       createResultError(
@@ -456,7 +492,11 @@ async function handleSelection(payload, reply) {
   }
 }
 
-async function handleBooking(message, reply, traceId) {
+async function handleBooking(
+  message,
+  reply,
+  traceId
+) {
   const payload = getPayload(message);
 
   if (!currentService) {
@@ -527,9 +567,10 @@ async function handleBooking(message, reply, traceId) {
 
   try {
     const result = await withTimeout(
-      () => processDualBooking(
-        requestPayload
-      ),
+      () =>
+        processDualBooking(
+          requestPayload
+        ),
       UI?.FRONTEND_API_TIMEOUT_MS || 60000,
       "processDualBooking"
     );
@@ -558,6 +599,14 @@ async function handleBooking(message, reply, traceId) {
       );
     }
   } catch (error) {
+    console.error(
+      "[calendario-2] Error al procesar reserva",
+      {
+        traceId,
+        message: error?.message
+      }
+    );
+
     reply(
       MESSAGE_TYPES.BOOK,
       createResultError(
@@ -575,9 +624,9 @@ $w.onReady(async () => {
   );
 
   const params = parseUrlParams();
-  const resolved = resolveServiceFromParams(
-    params
-  );
+
+  const resolved =
+    resolveServiceFromParams(params);
 
   if (!resolved) {
     console.error(
@@ -587,8 +636,11 @@ $w.onReady(async () => {
     return;
   }
 
-  currentServiceId = resolved.serviceId;
-  currentSlug = resolved.slug;
+  currentServiceId =
+    resolved.serviceId;
+
+  currentSlug =
+    resolved.slug;
 
   const widget = $w(
     "#htmlWidgetCalendario"
@@ -615,13 +667,11 @@ $w.onReady(async () => {
         message,
         reply
       ) => {
-        const type = getMessageType(
-          message
-        );
+        const type =
+          getMessageType(message);
 
-        const payload = getPayload(
-          message
-        );
+        const payload =
+          getPayload(message);
 
         if (type === MESSAGE_TYPES.NAV) {
           await handleNavigation(payload);
@@ -693,3 +743,4 @@ $w.onReady(async () => {
     );
   }
 });
+- Se mantiene `dateYmd` como identificador canónico de fecha.
