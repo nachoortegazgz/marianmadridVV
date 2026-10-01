@@ -7,7 +7,6 @@ VERSION: v5011-SERVICE-CATALOG-CANONICAL
 
 import wixLocation from "wix-location-frontend";
 import { getServiceBySlugOrId } from "backend/reservas.web";
-
 import {
   MESSAGE_TYPES,
   URLS,
@@ -16,7 +15,6 @@ import {
   _safeSlugOrId,
   _looksLikeGuid
 } from "public/mmUtils";
-
 import { createWidgetBridge } from "public/widgetBridge";
 
 let bridge = null;
@@ -93,9 +91,10 @@ function getReferenceId(value) {
 
   if (typeof value === "object") {
     return text(
-      value.id ||
       value.serviceId ||
+      value.addOnId ||
       value.nativeId ||
+      value.id ||
       value.value
     );
   }
@@ -104,27 +103,11 @@ function getReferenceId(value) {
 }
 
 function getServiceId(service) {
-  if (!service || typeof service !== "object") {
-    return "";
-  }
-
-  return getReferenceId(service.serviceId);
+  return getReferenceId(service?.serviceId);
 }
 
 function getServiceSlug(service) {
-  if (!service || typeof service !== "object") {
-    return "";
-  }
-
-  return _safeSlugOrId(service.slug || "");
-}
-
-function getServiceImage(service) {
-  if (!service || typeof service !== "object") {
-    return "";
-  }
-
-  return text(service.mainMedia);
+  return _safeSlugOrId(service?.slug || "");
 }
 
 function getLinkedPhaseId(value) {
@@ -136,11 +119,7 @@ function getLinkedPhaseId(value) {
 }
 
 function getAddOnOptions(service) {
-  if (!service || typeof service !== "object") {
-    return [];
-  }
-
-  return Array.isArray(service.addOnOptions)
+  return Array.isArray(service?.addOnOptions)
     ? service.addOnOptions
     : [];
 }
@@ -152,9 +131,6 @@ function normalizeService(data) {
 
   const serviceId = getServiceId(data);
   const slug = getServiceSlug(data);
-  const mainMedia = getServiceImage(data);
-  const addOnOptions = getAddOnOptions(data);
-  const linkedPhases = getLinkedPhaseId(data.linkedPhases);
 
   if (!_looksLikeGuid(serviceId)) {
     throw new Error(
@@ -174,11 +150,11 @@ function normalizeService(data) {
     title: text(data.title),
     description: text(data.description),
     location: text(data.location),
-    totalDuration: data.totalDuration ?? 0,
-    price: data.price ?? 0,
-    mainMedia,
-    addOnOptions,
-    linkedPhases,
+    totalDuration: Number(data.totalDuration || 0),
+    price: Number(data.price || 0),
+    mainMedia: text(data.mainMedia),
+    addOnOptions: getAddOnOptions(data),
+    linkedPhases: getLinkedPhaseId(data.linkedPhases),
     availableStaff: Array.isArray(data.availableStaff)
       ? data.availableStaff
       : [],
@@ -226,23 +202,14 @@ async function resolveServiceLookup() {
 }
 
 function getAddOnIds(payload) {
-  if (
-    !payload ||
-    !Array.isArray(payload.addOnOptions)
-  ) {
+  if (!payload || !Array.isArray(payload.addOnIds)) {
     return [];
   }
 
   return Array.from(
     new Set(
-      payload.addOnOptions
-        .map((addOn) => {
-          if (!addOn || typeof addOn !== "object") {
-            return "";
-          }
-
-          return text(addOn.addOnId);
-        })
+      payload.addOnIds
+        .map((addOn) => getReferenceId(addOn))
         .filter(Boolean)
     )
   ).slice(0, 21);
@@ -254,12 +221,9 @@ function buildBookingUrl(service, payload) {
     "/booking-calendar/calendario-2"
   );
 
-  const serviceId = getServiceId(service);
-  const slug = getServiceSlug(service);
-
   const query = [
-    `slug=${encodeURIComponent(slug)}`,
-    `serviceId=${encodeURIComponent(serviceId)}`,
+    `slug=${encodeURIComponent(getServiceSlug(service))}`,
+    `serviceId=${encodeURIComponent(getServiceId(service))}`,
     "referral=servicio-2"
   ];
 
@@ -307,9 +271,7 @@ $w.onReady(async () => {
   try {
     widget = $w("#htmlWidgetCustomService");
   } catch (error) {
-    showError(
-      "El widget del servicio no está disponible."
-    );
+    showError("El widget del servicio no está disponible.");
     return;
   }
 
@@ -318,9 +280,7 @@ $w.onReady(async () => {
     typeof widget.postMessage !== "function" ||
     typeof widget.onMessage !== "function"
   ) {
-    showError(
-      "El widget del servicio no está disponible."
-    );
+    showError("El widget del servicio no está disponible.");
     return;
   }
 
@@ -339,10 +299,7 @@ $w.onReady(async () => {
       traceId,
 
       onContextReady: async () => {
-        resolvedService = await loadService(
-          lookupValue
-        );
-
+        resolvedService = await loadService(lookupValue);
         return resolvedService;
       },
 
@@ -353,10 +310,7 @@ $w.onReady(async () => {
         if (!resolvedService) {
           console.warn(
             "[servicio-2] Servicio aún no disponible",
-            {
-              traceId,
-              type
-            }
+            { traceId, type }
           );
           return;
         }
@@ -376,13 +330,8 @@ $w.onReady(async () => {
             payload.target
           ).toUpperCase();
 
-          if (
-            !target ||
-            target === "SERVICIOS"
-          ) {
-            wixLocation.to(
-              getServicesUrl()
-            );
+          if (!target || target === "SERVICIOS") {
+            wixLocation.to(getServicesUrl());
           }
 
           return;
@@ -397,10 +346,7 @@ $w.onReady(async () => {
 
         console.warn(
           "[servicio-2] Mensaje no soportado",
-          {
-            traceId,
-            type
-          }
+          { traceId, type }
         );
       },
 
@@ -436,5 +382,3 @@ $w.onReady(async () => {
     );
   }
 });
-
-Este código usa únicamente los nombres canónicos de la matriz: `serviceId`, `slug`, `linkedPhases`, `addOnOptions`, `addOnIds`, `mainMedia`, `availableStaff` y `clientHidden`.
