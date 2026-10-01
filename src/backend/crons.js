@@ -1,0 +1,382 @@
+/*
+=============================================================================
+MODULE: backend/crons.js
+VERSION: v5009-FISCAL-V20.1
+BASE: v5008.2-FISCAL-RECOVERY + Directriz V20 (IDs nativa en ingles)
+RESPONSIBILITY: Jobs programados (cron). 6 crons activos.
+STANDARDS: G10 ASCII Strict.
+
+FIXES APLICADOS v5009-FISCAL-V20.1:
+  - V20-01: sin renombrados funcionales. Los campos de
+            CompensacionesPendientes usados por este modulo ya estan
+            contemplados en V20.1-EXPANDED.
+
+CORRECTIONS (heredadas): CRON-01..CRON-06.
+=============================================================================
+*/
+
+import wixData from "wix-data";
+import { BUSINESS_COLLECTIONS, SDK_CONFIG, CONCURRENCY } from "backend/internalConfig";
+import { makeTraceId, _safeTrim, _looksLikeGuid, withTimeout } from "public/mmUtils";
+import { logger } from "backend/logger";
+import { verifyFiscalHashChainIntegrity } from "backend/cajas.web";
+import { processBookingsServiceSyncQueue } from "backend/bookingServiceSync";
+import { cancelBookingElevated } from "backend/booking/bookingCore";
+
+const log = logger;
+
+const API_TIMEOUT_MS =
+  Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
+
+const MAX_COMPENSATION_ATTEMPTS =
+  Math.max(1, Number(CONCURRENCY?.MAX_COMPENSATION_RETRIES) || 3);
+
+// =============================================================================
+// CRON 1: cleanExpiredLocks - 15 * * * *
+// =============================================================================
+
+export async function cleanExpiredLocks() {
+  const traceId = makeTraceId("cron-locks");
+  try {
+    const now = new Date();
+    const res = await wixData
+      .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
+      .eq("controlType", CONTROL_TYPE.SLOT_LOCK)
+      .lt("expiresAt", now)
+      .limit(100)
+      .find({ suppressAuth: true });
+
+    let removed = 0;
+    for (const item of res?.items || []) {
+      await wixData
+        .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id, { suppressAuth: true })
+        .catch(() => null);
+      removed++;
+    }
+
+    log.info("cleanExpiredLocks completed", { removed, traceId });
+  } catch (err) {
+    log.error("cleanExpiredLocks failed", { error: err?.message, traceId });
+  }
+}
+
+// =============================================================================
+// CRON 2: cleanupExpiredDualCache - 20 * * * *
+// =============================================================================
+
+export async function cleanupExpiredDualCache() {
+  const traceId = makeTraceId("cron-dual-cache");
+  try {
+    const now = new Date();
+    const limit =
+      Number(SDK_CONFIG?.JOBS?.DUAL_CACHE_CLEANUP_LIMIT) || 100;
+
+    const res = await wixData
+      .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
+      .eq("controlType", CONTROL_TYPE.DUAL_CACHE)
+      .lt("expiresAt", now)
+      .limit(limit)
+      .find({ suppressAuth: true });
+
+    let removed = 0;
+    for (const item of res?.items || []) {
+      await wixData
+        .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id, {
+          suppressAuth: true,
+        })
+        .catch(() => null);
+      removed++;
+    }
+
+    log.info("cleanupExpiredDualCache completed", { removed, traceId });
+  } catch (err) {
+    log.error("cleanupExpiredDualCache failed", {
+      error: err?.message,
+      traceId,
+    });
+  }
+}
+
+// =============================================================================
+// CRON 3: runPendingCompensationsJob - 30 * * * *
+// =============================================================================
+
+async function _runOneCompensation(comp, traceId) {
+  const kind = _safeTrim(comp?.kind).toUpperCase();
+  const bookingId = _safeTrim(comp?.bookingId);
+
+  if (kind === "CANCEL_BOOKING") {
+    if (!bookingId || !_looksLikeGuid(bookingId)) {
+      throw new Error("CANCEL_BOOKING requires a valid bookingId GUID");
+    }
+
+    await withTimeout(
+      () =>
+        cancelBookingElevated(bookingId, {
+          suppressAuth: true,
+        }),
+      API_TIMEOUT_MS,
+      "cron:cancelBookingCompensation"
+    );
+
+    return { ok: true, action: "CANCEL_BOOKING", bookingId };
+  }
+
+  if (kind === "FISCAL_LEDGER" || kind === "RESYNC_LEDGER_ACCOUNTING") {
+    try {
+      const { registerBookingPayment } = await import("backend/cajas.web");
+      const amount = Number(comp?.amount);
+      const hasAmount = Number.isFinite(amount) && amount !== 0;
+      const transactionId = _safeTrim(comp?.transactionId);
+      const bookingIds = comp?.bookingIds || comp?.bookingId || null;
+
+      if (kind === "FISCAL_LEDGER" && hasAmount && transactionId) {
+        const result = await withTimeout(
+          () =>
+            registerBookingPayment(bookingIds, amount, comp?.paymentMethod || "ONLINE", {
+              concept: comp?.concept || "Fiscal recovery retry",
+              transactionId: transactionId,
+              orderId: comp?.orderId || null,
+              refundId: comp?.refundId || null,
+              movementType: comp?.movementType || null,
+              origen: "CRON_FISCAL_RECOVERY",
+              resourceId: "online",
+              traceId: traceId,
+            }),
+          API_TIMEOUT_MS,
+          "cron:fiscalLedgerRecovery"
+        );
+
+        if (result?.status === "SUCCESS") {
+          return { ok: true, action: kind, transactionId };
+        }
+
+        throw new Error(
+          (result && result.error && result.error.message) ||
+            "FISCAL_LEDGER recovery returned non-SUCCESS"
+        );
+      }
+
+      throw new Error(
+        kind +
+          " requires manual or extended processor (payload incomplete or RESYNC)"
+      );
+    } catch (err) {
+      throw err;
+    }
+  }
+
+  throw new Error(`Unsupported compensation kind: ${kind || "UNKNOWN"}`);
+}
+
+export async function runPendingCompensationsJob() {
+  const traceId = makeTraceId("cron-comp");
+  try {
+    const res = await wixData
+      .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
+      .eq("controlType", CONTROL_TYPE.COMPENSATION)
+      .in("status", ["PENDING", "RETRYING", "PENDING_RECOVERY"])
+      .lt("attempts", MAX_COMPENSATION_ATTEMPTS)
+      .limit(
+        Number(SDK_CONFIG?.JOBS?.FISCAL_RECOVERY_BATCH_SIZE) || 25
+      )
+      .find({ suppressAuth: true });
+
+    let processed = 0;
+    let failed = 0;
+
+    for (const comp of res?.items || []) {
+      try {
+        await _runOneCompensation(comp, traceId);
+
+        comp.status = "COMPLETED";
+        comp.lastError = null;
+        comp._updatedDate = new Date();
+        await wixData.update(
+          OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+          comp,
+          { suppressAuth: true }
+        );
+        processed++;
+      } catch (compErr) {
+        const attempts = Number(comp.attempts || 0) + 1;
+        comp.attempts = attempts;
+        comp.lastError = compErr?.message || "UNKNOWN";
+        comp.status =
+          attempts >= MAX_COMPENSATION_ATTEMPTS ? "FAILED" : "RETRYING";
+        comp._updatedDate = new Date();
+
+        await wixData
+          .update(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, comp, {
+            suppressAuth: true,
+          })
+          .catch(() => null);
+
+        failed++;
+
+        if (comp.status === "FAILED" || comp.alertRequired === true) {
+          await wixData
+            .insert(
+              OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+              {
+                controlType: CONTROL_TYPE.ALERT,
+                dedupeKey: `ALERT_${traceId}`,
+                traceId,
+                alertType:
+                  String(comp.kind || "").includes("FISCAL") ||
+                  String(comp.kind || "").includes("RESYNC")
+                    ? "FISCAL_RECOVERY_FAILED"
+                    : "COMPENSATION_FAILED",
+                severity: "ERROR",
+                message: `Compensation ${comp.kind || "UNKNOWN"} failed for booking ${comp.bookingId || comp.transactionId || "n/a"}`,
+                status: "OPEN",
+                traceId,
+                meta: {
+                  compensationId: comp._id || null,
+                  bookingId: comp.bookingId || null,
+                  lastError: comp.lastError,
+                  attempts,
+                },
+                _createdDate: new Date(),
+              },
+              { suppressAuth: true }
+            )
+            .catch(() => null);
+        }
+      }
+    }
+
+    log.info("runPendingCompensationsJob completed", {
+      processed,
+      failed,
+      traceId,
+    });
+  } catch (err) {
+    log.error("runPendingCompensationsJob failed", {
+      error: err?.message,
+      traceId,
+    });
+  }
+}
+
+// =============================================================================
+// CRON 4: cleanExpiredDaysCache - 0 1 * * *
+// =============================================================================
+
+export async function cleanExpiredDaysCache() {
+  const traceId = makeTraceId("cron-days-cache");
+  try {
+    const now = new Date();
+    const res = await wixData
+      .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
+      .eq("controlType", CONTROL_TYPE.DAYS_CACHE)
+      .lt("expiresAt", now)
+      .limit(200)
+      .find({ suppressAuth: true });
+
+    let removed = 0;
+    for (const item of res?.items || []) {
+      await wixData
+        .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id, {
+          suppressAuth: true,
+        })
+        .catch(() => null);
+      removed++;
+    }
+
+    log.info("cleanExpiredDaysCache completed", { removed, traceId });
+  } catch (err) {
+    log.error("cleanExpiredDaysCache failed", {
+      error: err?.message,
+      traceId,
+    });
+  }
+}
+
+// =============================================================================
+// CRON 5: cleanExpiredSlotsCache - 10 1 * * *
+// =============================================================================
+
+export async function cleanExpiredSlotsCache() {
+  const traceId = makeTraceId("cron-slots-cache");
+  try {
+    log.info(
+      "cleanExpiredSlotsCache completed (RAM cache auto-resets on cold start)",
+      { traceId }
+    );
+  } catch (err) {
+    log.error("cleanExpiredSlotsCache failed", {
+      error: err?.message,
+      traceId,
+    });
+  }
+}
+
+// =============================================================================
+// CRON 6: systemHealthCheck - 0 7 * * *
+// =============================================================================
+
+export async function systemHealthCheck() {
+  const traceId = makeTraceId("cron-health");
+  try {
+    const results = {
+      timestamp: new Date().toISOString(),
+      collections: {},
+      fiscalChain: null,
+      secrets: {},
+    };
+
+    const criticalCols = [
+      BUSINESS_COLLECTIONS.CITAS_F2,
+      BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
+      OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+      BUSINESS_COLLECTIONS.MAPA_STAFF,
+    ];
+
+    for (const col of criticalCols) {
+      try {
+        const count = await wixData.query(col).limit(1).count();
+        results.collections[col] = { accessible: true, count };
+      } catch (_) {
+        results.collections[col] = { accessible: false, count: 0 };
+      }
+    }
+
+    try {
+      const chainResult = await verifyFiscalHashChainIntegrity({
+        traceId,
+        limit: 100,
+      });
+      results.fiscalChain = chainResult.status;
+    } catch (_) {
+      results.fiscalChain = "ERROR";
+    }
+
+    log.info("systemHealthCheck completed", { results, traceId });
+
+    const hasIssues =
+      Object.values(results.collections).some((c) => !c.accessible) ||
+      results.fiscalChain !== "SUCCESS";
+
+    if (hasIssues) {
+      await wixData
+        .insert(
+          OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+          {
+            controlType: CONTROL_TYPE.ALERT,
+            dedupeKey: `ALERT_HEALTH_${Date.now()}`,
+            alertType: "HEALTH_CHECK_ISSUES",
+            severity: "WARNING",
+            message: "systemHealthCheck detected issues",
+            status: "OPEN",
+            traceId,
+            _createdDate: new Date(),
+          },
+          { suppressAuth: true }
+        )
+        .catch(() => null);
+    }
+  } catch (err) {
+    log.error("systemHealthCheck failed", { error: err?.message, traceId });
+  }
+}

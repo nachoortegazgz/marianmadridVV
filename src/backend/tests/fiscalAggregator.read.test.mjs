@@ -1,0 +1,106 @@
+/*
+=============================================================================
+SUITE: fiscalAggregator.read (FASE1-P0 mandatory test)
+Purpose: verify _read* adapters return the CANONICAL AEAT value when present
+and the legacy value with a log.warn when not, and that _getBusinessTaxId no
+longer touches the FORBIDDEN ConfiguracionFiscal collection.
+Runs offline via tests/loader.mjs mocks. G10 ASCII strict.
+=============================================================================
+*/
+import test from 'node:test';
+import assert from 'node:assert';
+
+const { wixDataMock } = await import('./loader.mjs');
+const FA = await import('backend/fiscalAggregator.web');
+const IC = await import('backend/internalConfig');
+const loggerMod = await import('backend/logger');
+
+const T = FA.__test__;
+
+test('READ-01 taxable amount prefers canonical baseImponibleOImporteNoSujeto', () => {
+  const v = T.readTaxableAmount({
+    baseImponibleOImporteNoSujeto: 100,
+    taxableBaseOrNonSubjectAmount: 90,
+    taxableAmount: 80,
+  });
+  assert.strictEqual(v, 100);
+});
+
+test('READ-02 taxable amount falls back to legacy with warn', () => {
+  const warns = [];
+  const origWarn = loggerMod.logger.warn;
+  loggerMod.logger.warn = (msg, meta) => { warns.push(msg); };
+  try {
+    const v = T.readTaxableAmount({ taxableAmount: 80, _id: 'M1' });
+    assert.strictEqual(v, 80);
+    assert.ok(warns.some((w) => String(w).includes('legacy-read')), 'expected legacy-read warning');
+  } finally {
+    loggerMod.logger.warn = origWarn;
+  }
+});
+
+test('READ-03 tax amount prefers canonical cuotaTotal', () => {
+  assert.strictEqual(T.readTaxAmount({ cuotaTotal: 21, taxAmount: 20, cuotaIva: 19 }), 21);
+});
+
+test('READ-04 tax rate prefers canonical tipoImpositivo', () => {
+  assert.strictEqual(T.readTaxRate({ tipoImpositivo: 0.21, taxRate: 0.1, tasaIva: 0.04 }), 0.21);
+});
+
+test('READ-05 tax rate legacy emits warn', () => {
+  const warns = [];
+  const orig = loggerMod.logger.warn;
+  loggerMod.logger.warn = (m) => { warns.push(m); };
+  try {
+    assert.strictEqual(T.readTaxRate({ tasaIva: 0.04, _id: 'M2' }), 0.04);
+    assert.ok(warns.length >= 1, 'expected at least one legacy-read warning');
+  } finally {
+    loggerMod.logger.warn = orig;
+  }
+});
+
+test('READ-06 record hash prefers canonical recordHash', () => {
+  assert.strictEqual(
+    T.readRecordHash({ recordHash: 'AAA', currentRecordHash: 'BBB', hashCadena: 'CCC' }),
+    'AAA'
+  );
+});
+
+test('TAXID-01 business tax id reads DatosFiscales CONFIG_SISTEMA nifProductor', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.DATOS_FISCALES, [
+    { recordType: IC.RECORD_TYPE.CONFIG_SISTEMA, active: true, nifProductor: 'B12345678' },
+  ]);
+  const id = await T.getBusinessTaxId('trace-taxid-1');
+  assert.strictEqual(id, 'B12345678');
+  const collectionsQueried = wixDataMock._calls.filter((c) => c.op === 'query').map((c) => c.collection);
+  assert.ok(collectionsQueried.includes('DatosFiscales'), 'must query DatosFiscales');
+  assert.ok(!collectionsQueried.includes('ConfiguracionFiscal'), 'FORBIDDEN collection must NOT be queried');
+});
+
+test('TAXID-02 legacy EMISOR adapter returns taxId with warn when no config row', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.DATOS_FISCALES, [
+    { thirdPartyType: 'EMISOR', active: true, taxId: 'b99999999' },
+  ]);
+  const warns = [];
+  const orig = loggerMod.logger.warn;
+  loggerMod.logger.warn = (m) => { warns.push(m); };
+  try {
+    const id = await T.getBusinessTaxId('trace-taxid-2');
+    assert.strictEqual(id, 'B99999999');
+    assert.ok(warns.length >= 1, 'expected legacy adapter warning');
+  } finally {
+    loggerMod.logger.warn = orig;
+  }
+});
+
+test('TAXID-03 safe placeholder when nothing found', async () => {
+  wixDataMock._reset();
+  const id = await T.getBusinessTaxId('trace-taxid-3');
+  assert.strictEqual(id, 'BXXXXXXXX');
+});
+
+test('DEDUPE-01 prepareScheduledManagerPackages removed from aggregator', () => {
+  assert.strictEqual(FA.prepareScheduledManagerPackages, undefined);
+});
