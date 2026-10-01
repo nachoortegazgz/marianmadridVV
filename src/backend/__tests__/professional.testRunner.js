@@ -261,17 +261,28 @@ describe('🔬 SUITE PROFESIONAL E2E - Marian Madrid', () => {
             
             const lockAttempt2 = { ...lockAttempt1 };
             
-            // Primer usuario consigue el lock
-            mockWixData.insert.withArgs(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, lockAttempt1).resolves({ _id: slotKey });
+            // FASE3 SSOT: los locks son registros ControlOperativo con controlType SLOTLOCK y dedupeKey = slotKey
+            const lockPayload1 = { ...lockAttempt1, controlType: 'SLOTLOCK', dedupeKey: slotKey };
+            const lockPayload2 = { ...lockAttempt2, controlType: 'SLOTLOCK', dedupeKey: slotKey };
+
+            // Simular constraint de unicidad sobre dedupeKey (semantica real de ControlOperativo)
+            const insertedDedupeKeys = new Set();
+            mockWixData.insert.callsFake(async (collectionName, item) => {
+                if (collectionName === OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO && item && item.dedupeKey) {
+                    if (insertedDedupeKeys.has(item.dedupeKey)) {
+                        throw new Error('Duplicate key error');
+                    }
+                    insertedDedupeKeys.add(item.dedupeKey);
+                    return { _id: item.dedupeKey };
+                }
+                return { _id: 'mock-id' };
+            });
             
-            // Segundo usuario falla porque el lock ya existe
-            mockWixData.insert.withArgs(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, lockAttempt2).callsFake(() => Promise.reject(new Error('Duplicate key error')));
-            
-            const result1 = await mockWixData.insert(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, lockAttempt1);
+            const result1 = await mockWixData.insert(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, lockPayload1);
             expect(result1._id).to.equal(slotKey);
             
             try {
-                await mockWixData.insert(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, lockAttempt2);
+                await mockWixData.insert(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, lockPayload2);
                 expect.fail('Debería haber lanzado error por duplicado');
             } catch (error) {
                 expect(error.message).to.include('Duplicate');
@@ -381,9 +392,9 @@ describe('🔬 SUITE PROFESIONAL E2E - Marian Madrid', () => {
                 descripcion: 'Venta servicio facial - booking_001',
                 fechaAsiento: new Date().toISOString(),
                 lineas: [
-                    { cuenta: '430000', descripcion: 'Cliente por venta', debe: 77.55, haber: 0 },
+                    { cuenta: '430000', descripcion: 'Cliente por venta', debe: 77.35, haber: 0 },
                     { cuenta: '705000', descripcion: 'Ingreso por servicios', debe: 0, haber: 65.00 },
-                    { cuenta: '477000', descripcion: 'Hacienda Pública IVA repercutido', debe: 0, haber: 13.65 }
+                    { cuenta: '477000', descripcion: 'Hacienda Pública IVA repercutido', debe: 0, haber: 12.35 }
                 ]
             };
             
@@ -392,8 +403,8 @@ describe('🔬 SUITE PROFESIONAL E2E - Marian Madrid', () => {
             const totalHaber = asientoData.lineas.reduce((sum, l) => sum + l.haber, 0);
             
             expect(totalDebe).to.equal(totalHaber, 'Partida doble: debe == haber');
-            expect(totalDebe).to.equal(77.55);
-            expect(totalHaber).to.equal(77.55);
+            expect(totalDebe).to.equal(77.35);
+            expect(totalHaber).to.equal(77.35);
             
             // Validar códigos PGC
             const codigosPGC = ['430000', '705000', '477000'];

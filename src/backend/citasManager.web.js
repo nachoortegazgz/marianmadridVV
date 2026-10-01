@@ -763,7 +763,6 @@ function _buildDualRescheduleSlot(
 
   const linkedServiceId = _safeTrim(
     serviceConfig.linkedPhases ||
-    serviceConfig.linkedPhases ||
     ""
   );
 

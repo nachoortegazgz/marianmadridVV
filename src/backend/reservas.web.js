@@ -85,11 +85,12 @@ function _parseImport2Addons(value) {
 
 function _normalizeImport2Addon(addon) {
   if (!addon || typeof addon !== "object") return null;
+  // MATRIZ A-E SSOT v7.0: canonical add-on keys are addOnId / price
+  // (addOnOptions[].price). No legacy aliases (addonId) are read.
   return {
-    ...addon,
-    id: _safeTrim(addon.id || addon._id || addon.addonId),
+    id: _safeTrim(addon.addOnId || addon.id || addon._id),
     nombre: _safeTrim(addon.nombre || addon.name || addon.title),
-    precio: Number(addon.precio ?? addon.price ?? 0) || 0
+    precio: Number(addon.price ?? addon.precio ?? 0) || 0
   };
 }
 
@@ -261,10 +262,13 @@ function _getRequestedAddonContext(service, requestedAddonIds) {
       .map((id) => _safeTrim(id))
       .filter(Boolean)
   );
-  const addons = Array.isArray(service?.metadata?.addons)
-    ? service.metadata.addons
+  // MATRIZ A-E SSOT v7.0: add-ons are read only from the canonical
+  // addOnOptions DTO projection (service.addOnOptions). No legacy
+  // metadata.addons alias is consumed.
+  const addOnOptions = Array.isArray(service?.addOnOptions)
+    ? service.addOnOptions
     : [];
-  const selected = addons.filter((addon) => {
+  const selected = addOnOptions.filter((addon) => {
     const id = _safeTrim(addon?.id);
     const nativeId = _safeTrim(addon?.nativeId);
     return requested.has(id) || requested.has(nativeId);
@@ -277,7 +281,7 @@ function _getRequestedAddonContext(service, requestedAddonIds) {
           .filter((id) => _looksLikeGuid(id))
       )
     ),
-    addons: selected
+    addOnOptions: selected
   };
 }
 
@@ -369,9 +373,9 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
       );
     } else {
       result = await withTimeout(
-        () => wixData.query(SERVICIOS_COL).eq("slugUrl", clean).limit(1).find({ suppressAuth: true }),
+        () => wixData.query(SERVICIOS_COL).eq("slug", clean).limit(1).find({ suppressAuth: true }),
         WATCHDOG_TIMEOUT_MS,
-        "getServiceBySlugOrId:slugUrl"
+        "getServiceBySlugOrId:slug"
       );
 
       if (!result?.items?.[0] && _looksLikeGuid(clean)) {
@@ -399,8 +403,8 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
     if (mapped.serviceId) {
       _cacheSetBounded(serviceCatalogRAM, mapped.serviceId, cacheEntry, CACHE_MAX_SIZE);
     }
-    if (mapped.slugUrl) {
-      _cacheSetBounded(serviceCatalogRAM, mapped.slugUrl, cacheEntry, CACHE_MAX_SIZE);
+    if (mapped.slug) {
+      _cacheSetBounded(serviceCatalogRAM, mapped.slug, cacheEntry, CACHE_MAX_SIZE);
     }
 
     return { status: "SUCCESS", data: mapped, error: null };
@@ -435,9 +439,10 @@ export async function _mapServiceImport2ToUX(service, traceId) {
   if (!_looksLikeGuid(serviceId)) {
     throw new Error("Catalog serviceId is missing or invalid.");
   }
-  const hidden = _readImport2Field(service, "hidden") === true;
+  // MATRIZ D SSOT v7.0: canonical visibility key is clientHidden.
+  const clientHidden = _readImport2Field(service, "clientHidden") === true;
   const allowCombine =
-    !hidden && _readImport2Field(service, "allowCombine") === true;
+    !clientHidden && _readImport2Field(service, "allowCombine") === true;
   const linkedPhases = _safeTrim(_readImport2Field(service, "linkedPhases"));
 
   if (allowCombine && !_looksLikeGuid(linkedPhases)) {
@@ -462,13 +467,13 @@ export async function _mapServiceImport2ToUX(service, traceId) {
     if (resolved > 0) phase2Duration = resolved;
   }
 
-  const totalDuration = Number(_readImport2Field(service, "totalDuration")) || 0;
-  const buffer = Number(_readImport2Field(service, "buffer")) || 0;
+  // MATRIZ A-E SSOT v7.0: field "buffer" has no canonical equivalent and is
+  // eliminated from the contract (no silent read).
   const title = _safeTrim(_readImport2Field(service, "title")) || "Service";
   const price = Number(_readImport2Field(service, "price")) || 0;
   const currency = _safeTrim(_readImport2Field(service, "currency")) || "EUR";
   const pricingModel = _safeTrim(_readImport2Field(service, "pricingModel")) || null;
-  const slugUrl = _safeTrim(_readImport2Field(service, "slugUrl")) || null;
+  const slug = _safeTrim(_readImport2Field(service, "slug")) || null;
   const serviceType = _safeTrim(_readImport2Field(service, "serviceType")) || null;
   const sku = _safeTrim(_readImport2Field(service, "sku")) || null;
   const depositAmount = Number(_readImport2Field(service, "depositAmount")) || 0;
@@ -476,23 +481,26 @@ export async function _mapServiceImport2ToUX(service, traceId) {
   const onlinePayment = _readImport2Field(service, "onlinePayment") === true;
   const inPersonPayment = _readImport2Field(service, "inPersonPayment") === true;
   const taxIncluded = _readImport2Field(service, "taxIncluded") === true;
-  const taxRate = Number(_readImport2Field(service, "taxRate")) || 0;
+  // MATRIZ A-E SSOT v7.0: canonical AEAT fiscal key is tipoImpositivo.
+  // Legacy alias taxRate is not read (no silent conversion).
+  const tipoImpositivo = Number(_readImport2Field(service, "tipoImpositivo")) || 0;
   const categoryId = _safeTrim(_readImport2Field(service, "categoryId")) || null;
   const locationId = _safeTrim(_readImport2Field(service, "locationId")) || null;
   const location = _safeTrim(_readImport2Field(service, "location")) || null;
-  const imageUrl = _safeTrim(_readImport2Field(service, "mainMedia")) || "";
+  const mainMedia = _safeTrim(_readImport2Field(service, "mainMedia")) || "";
   const shortDescription = _safeTrim(_readImport2Field(service, "tagLine")) || null;
   const longDescription = _safeTrim(_readImport2Field(service, "description")) || null;
   const internalNotes = _safeTrim(_readImport2Field(service, "internalNotes")) || null;
 
   const durationRange = readDurationRange(service);
 
-  const estimatedTotal =
-    totalDuration ||
-    (allowCombine
-      ? phase1Duration + exposureDuration + phase2Duration
-      : phase1Duration) ||
-    30;
+  // MATRIZ E SSOT v7.0: totalDuration is ALWAYS the exact phase sum for
+  // dual services (legacy stored value and fallback 30 eradicated).
+  const phaseSum = allowCombine
+    ? phase1Duration + exposureDuration + phase2Duration
+    : phase1Duration;
+
+  const estimatedTotal = phaseSum;
 
   const availableStaff = cleanGuidList(_readImport2Field(service, "availableStaff"));
 
@@ -508,26 +516,27 @@ export async function _mapServiceImport2ToUX(service, traceId) {
     })
   );
 
-  const addons = _parseImport2Addons(_readImport2Field(service, "addOnOptions"))
+  // MATRIZ A-E SSOT v7.0: canonical add-on collection is addOnOptions
+  // with keys addOnId / price. No addons/addOns alias, no derived
+  // addonsPrecio field.
+  const addOnOptions = _parseImport2Addons(_readImport2Field(service, "addOnOptions"))
     .map(_normalizeImport2Addon)
     .filter(Boolean);
 
   return {
     serviceId,
-    slugUrl,
+    slug,
     serviceType,
     sku,
     categoryId,
     locationId,
     localizacion: location,
     internalNotes,
-    linkFases: allowCombine ? linkedPhases : null,
     permitirCombinar: allowCombine,
     tiempoFase1: phase1Duration,
     tiempoExposicion: exposureDuration,
     tiempoFase2: phase2Duration,
-    duracionTotal: totalDuration,
-    buffer,
+    duracionTotal: estimatedTotal,
     availableStaff,
     staffOptions,
     depositAmount,
@@ -535,7 +544,7 @@ export async function _mapServiceImport2ToUX(service, traceId) {
     onlinePayment,
     inPersonPayment,
     taxIncluded,
-    taxRate,
+    tipoImpositivo,
     pricingModel,
     currency,
     linkedPhases: allowCombine ? linkedPhases : null,
@@ -544,8 +553,10 @@ export async function _mapServiceImport2ToUX(service, traceId) {
     exposureDuration,
     phase2Duration,
     totalDuration: estimatedTotal,
-    hidden,
+    clientHidden,
     durationRange,
+    addOnOptions,
+    mainMedia,
     metadata: {
       titulo: title,
       tituloServicio: title,
@@ -555,11 +566,10 @@ export async function _mapServiceImport2ToUX(service, traceId) {
       resumenCorto: shortDescription,
       descripcionLarga: longDescription,
       pricingModel,
-      addons,
-      addonsPrecio: addons.map((addon) => Number(addon?.precio || 0)),
-      imageUrl,
+      addOnOptions,
+      mainMedia,
       currency,
-      taxRate,
+      tipoImpositivo,
       pricing: { base: price, currency },
       timing: { estimatedTotal, totalDuration: estimatedTotal },
       durationRange
@@ -625,7 +635,9 @@ export const resolveServiceId = webMethod(
 
 export function _toPublicService(service) {
   if (!service || typeof service !== "object") return null;
-  const { linkFases, internalNotes, ...publicService } = service;
+  // MATRIZ A-E SSOT v7.0: internalNotes is stripped from the public DTO;
+  // linkFases alias no longer exists in the mapped object.
+  const { internalNotes, ...publicService } = service;
   return {
     ...publicService,
     linkedPhases: publicService.linkedPhases || null
@@ -1230,7 +1242,7 @@ export async function _resolveStaffForSlotInternal({
   if (f2Start && f2End) {
     const serviceConfig = await _getServiceBySlugOrIdInternal(resolved, activeTraceId);
     const linkedPhases = _safeTrim(
-      serviceConfig?.data?.linkedPhases || serviceConfig?.data?.linkFases
+      serviceConfig?.data?.linkedPhases
     );
 
     if (!_looksLikeGuid(linkedPhases)) {

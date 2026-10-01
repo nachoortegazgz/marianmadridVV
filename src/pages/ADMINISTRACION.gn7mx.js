@@ -134,7 +134,7 @@ $w.onReady(async () => {
   }
 
   createWidgetBridge(widget, {
-    slugUrl: "administracion",
+    slug: "administracion",
     traceId,
 
     onContextReady: async () => {

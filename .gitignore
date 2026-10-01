@@ -1,6 +1,6 @@
-# dependencies
+# Dependencies
 node_modules/
-.vscode/
-.idea/
-.wix/
-jsconfig.json
+
+# Environment
+.env
+.env.local

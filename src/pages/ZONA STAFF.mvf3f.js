@@ -75,7 +75,7 @@ $w.onReady(async () => {
   }
 
   bridge = createWidgetBridge(widget, {
-    slugUrl: "only-staff",
+    slug: "only-staff",
     traceId,
     handshakeTimeoutMs: UI.HANDSHAKE_TIMEOUT_MS,
     contextTimeoutMs: UI.CONTEXT_TIMEOUT_MS,

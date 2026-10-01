@@ -33,6 +33,7 @@ import {
     THIRD_PARTY_TYPE,
     ITEM_NATURE,
     CONTROL_TYPE,
+    CONTROL_STATUS,
     TIMECLOCK_TYPE,
 } from "backend/internalConfig";
 
@@ -540,34 +541,21 @@ function _validateServiciosCatalogoSchema(item = {}) {
     const phase1Duration = Number(item.phase1Duration) || 0;
     const exposureDuration = Number(item.exposureDuration) || 0;
     const phase2Duration = Number(item.phase2Duration) || 0;
-    const totalDuration = Number(item.totalDuration) || 0;
 
     if (
         !_isFiniteNonNegative(phase1Duration) ||
         !_isFiniteNonNegative(exposureDuration) ||
-        !_isFiniteNonNegative(phase2Duration) ||
-        !_isFiniteNonNegative(totalDuration)
+        !_isFiniteNonNegative(phase2Duration)
     ) {
         _schemaError("Las duraciones deben ser numeros no negativos");
     }
 
-    // Inferir totalDuration si allowCombine y falta
-    if (allowCombine && totalDuration === 0) {
-        const inferred = phase1Duration + exposureDuration + phase2Duration;
-        if (inferred > 0) {
-            item.totalDuration = inferred;
-        }
-    }
-
-    if (allowCombine && totalDuration > 0) {
-        const expectedDuration =
-            phase1Duration + exposureDuration + phase2Duration;
-
-        if (expectedDuration > 0 && Math.abs(totalDuration - expectedDuration) > 1) {
-            _schemaError(
-                `totalDuration (${totalDuration}) no coincide con la suma de fases (${expectedDuration})`
-            );
-        }
+    // MATRIZ E SSOT v7.0: totalDuration es SIEMPRE la suma exacta de fases.
+    // Se elimina la lectura del valor persistido legacy y el fallback 30.
+    if (allowCombine) {
+        item.totalDuration = phase1Duration + exposureDuration + phase2Duration;
+    } else {
+        item.totalDuration = phase1Duration;
     }
 
     return item;
@@ -896,6 +884,9 @@ export function ControlOperativo_beforeInsert(item) {
 
     if (!_safeTrim(item.dedupeKey)) {
         _schemaError("dedupeKey obligatorio en ControlOperativo");
+    }
+    if (!_safeTrim(item.status) || !Object.values(CONTROL_STATUS).includes(item.status)) {
+        _schemaError("status invalido en ControlOperativo (CONTROL_STATUS)");
     }
     if (!_safeTrim(item.traceId)) {
         _schemaError("traceId obligatorio (SSOT-12)");

@@ -1,0 +1,33 @@
+# EVIDENCIA GREPS NEGATIVOS - SSOT v7.0 (01/10/2026)
+
+PATTERN [slugUrl] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [phase2ServiceId] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [linkFases] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [serviceID] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [servicioID] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [addonIds\b] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [\baddons\b] -> escrituras/lecturas activas fuera de tests/comentarios: 12
+PATTERN [addOns\b] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [addonsPrecio] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [dateYMD] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [\bymd\b] -> escrituras/lecturas activas fuera de tests/comentarios: 21
+PATTERN [imageUrl] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [mainMediaUrl] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [staffDisponible] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [hiddenClient] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [ocultoCliente] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [\btaxRate] -> escrituras/lecturas activas fuera de tests/comentarios: 41
+PATTERN [ERRORCODES] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [SDKCONFIG] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [\bUNPAID\b] -> escrituras/lecturas activas fuera de tests/comentarios: 2
+PATTERN [\bCOLLECTIONS\b] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [SecuenciaTickets] -> escrituras/lecturas activas fuera de tests/comentarios: 1
+PATTERN [InventarioStockVentaCierre] -> escrituras/lecturas activas fuera de tests/comentarios: 1
+PATTERN [AsientosContables\.] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [EventosSistemaFacturacion] -> escrituras/lecturas activas fuera de tests/comentarios: 1
+PATTERN [FacturasRecibidas\.] -> escrituras/lecturas activas fuera de tests/comentarios: 0
+PATTERN [ConfiguracionFiscal] -> escrituras/lecturas activas fuera de tests/comentarios: 1
+PATTERN [LibroRegistroFacturasRecibidas] -> escrituras/lecturas activas fuera de tests/comentarios: 1
+PATTERN [PlanCuentasContables] -> escrituras/lecturas activas fuera de tests/comentarios: 1
+PATTERN [CategoriasServicio] -> escrituras/lecturas activas fuera de tests/comentarios: 1
+PATTERN [LibroRegistroFacturasExpedidas] -> escrituras/lecturas activas fuera de tests/comentarios: 9
